@@ -1,11 +1,20 @@
 import { useEffect, useState, useCallback } from 'react';
-import api, { type User } from '../services/api';
+import api, { type User, type AuthResponse } from '../services/api';
+
+// Info mínima para completar el cambio de contraseña obligatorio
+export interface PendingChallenge {
+  email: string;
+  session: string;
+}
 
 export interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (credentials: { email: string; password: string }) => Promise<import('../services/api').AuthResponse | null>;
+  pendingChallenge: PendingChallenge | null;
+  login: (credentials: { email: string; password: string }) => Promise<AuthResponse | null>;
+  completarNuevaContrasena: (nuevaContrasena: string, nombre: string) => Promise<void>;
+  cancelarCambioContrasena: () => void;
   register: (credentials: {
     email: string;
     password: string;
@@ -20,6 +29,7 @@ export const useAuth = (): AuthState => {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [pendingChallenge, setPendingChallenge] = useState<PendingChallenge | null>(null);
 
   // Cargar sesión al iniciar
   const loadSession = useCallback(async () => {
@@ -50,7 +60,7 @@ export const useAuth = (): AuthState => {
   const login = useCallback(async (credentials: {
     email: string;
     password: string;
-  }): Promise<import('../services/api').AuthResponse | null> => {
+  }): Promise<AuthResponse | null> => {
     setIsLoading(true);
     try {
       const result = await api.login(credentials);
@@ -60,10 +70,46 @@ export const useAuth = (): AuthState => {
         setIsAuthenticated(true);
         return result;
       }
+      // Contraseña temporal: queda pendiente que el usuario defina la nueva
+      if (result?.challengeName === 'NEW_PASSWORD_REQUIRED' && result.session) {
+        setPendingChallenge({ email: credentials.email, session: result.session });
+        return result;
+      }
+      return null;
+    } catch {
+      // Credenciales inválidas u otro error: no guardar nada ni marcar sesión
       return null;
     } finally {
       setIsLoading(false);
     }
+  }, []);
+
+  // Activa el usuario confirmando el cambio de contraseña obligatorio.
+  // "nombre" completa el atributo obligatorio "name" si el usuario fue creado sin él
+  const completarNuevaContrasena = useCallback(async (nuevaContrasena: string, nombre: string): Promise<void> => {
+    if (!pendingChallenge) {
+      return;
+    }
+    setIsLoading(true);
+    try {
+      await api.confirmarNuevaContrasena(
+        pendingChallenge.email,
+        pendingChallenge.session,
+        nuevaContrasena,
+        nombre,
+      );
+      const currentUser = api.getCurrentUser();
+      setUser(currentUser);
+      setIsAuthenticated(true);
+      setPendingChallenge(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [pendingChallenge]);
+
+  // Cancelar el cambio de contraseña pendiente y volver al login
+  const cancelarCambioContrasena = useCallback(() => {
+    setPendingChallenge(null);
   }, []);
 
   // Registro de nuevo usuario
@@ -75,8 +121,7 @@ export const useAuth = (): AuthState => {
   }): Promise<boolean> => {
     setIsLoading(true);
     try {
-      const result = await api.register(credentials);
-      // Después de registro, podríamos hacer login automático o solo mostrar mensaje
+      await api.register(credentials);
       setIsLoading(false);
       return true;
     } catch (error) {
@@ -92,6 +137,7 @@ export const useAuth = (): AuthState => {
       await api.logout();
       setUser(null);
       setIsAuthenticated(false);
+      setPendingChallenge(null);
     } finally {
       setIsLoading(false);
     }
@@ -113,7 +159,10 @@ export const useAuth = (): AuthState => {
     user,
     isAuthenticated,
     isLoading,
+    pendingChallenge,
     login,
+    completarNuevaContrasena,
+    cancelarCambioContrasena,
     register,
     logout,
     checkSession,

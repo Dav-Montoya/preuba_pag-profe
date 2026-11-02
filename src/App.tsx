@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "./hooks/useAuth";
+import useProductos from "./services/productos/useProductos";
 
 // ==========================================
 // Subcomponentes
@@ -89,12 +90,99 @@ function LoginForm({ credentials, onChange, onLogin }: LoginFormProps) {
   );
 }
 
+interface ChangePasswordFormProps {
+  email: string;
+  password: string;
+  nombre: string;
+  error?: string | null;
+  isSubmitting: boolean;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+}
+
+function ChangePasswordForm({
+  email,
+  password,
+  nombre,
+  error,
+  isSubmitting,
+  onChange,
+  onSubmit,
+  onCancel,
+}: ChangePasswordFormProps) {
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSubmit();
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-3 w-full max-w-sm mt-2">
+      <p className="text-sm text-zinc-400 font-medium text-center">
+        Activa tu cuenta
+      </p>
+      <p className="text-xs text-zinc-500 text-center leading-relaxed">
+        Ingresaste con una contraseña temporal. Define una nueva contraseña para
+        completar tu registro y poder usar la aplicación.
+      </p>
+
+      <input
+        type="text"
+        name="nombre"
+        value={nombre}
+        onChange={onChange}
+        placeholder="Tu nombre"
+        required
+        maxLength={100}
+        className="w-full px-4 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
+      />
+      <input
+        type="password"
+        name="nuevaContrasena"
+        value={password}
+        onChange={onChange}
+        placeholder="Nueva contraseña (mínimo 8 caracteres)"
+        required
+        minLength={8}
+        autoComplete="new-password"
+        className="w-full px-4 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
+      />
+
+      {error && (
+        <p className="text-sm text-rose-400 text-center">{error}</p>
+      )}
+
+      <button
+        type="submit"
+        disabled={isSubmitting}
+        className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium rounded-xl shadow-lg shadow-indigo-500/20 transition-all duration-200 cursor-pointer active:scale-95"
+      >
+        {isSubmitting ? "Activando cuenta..." : "Guardar contraseña"}
+      </button>
+
+      <button
+        type="button"
+        onClick={onCancel}
+        className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+      >
+        Volver al inicio de sesión
+      </button>
+    </form>
+  );
+}
+
 interface UserDashboardProps {
   userEmail?: string;
   onLogout: () => void;
 }
 
 function UserDashboard({ userEmail, onLogout }: UserDashboardProps) {
+  const productos = useProductos();
+
+  useEffect(() => {
+    console.log("Hola!!");
+    productos.execute();
+  }, [])
   return (
     <div className="flex flex-col items-center gap-4 mt-2 w-full">
       <div className="px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-xl text-sm text-zinc-300">
@@ -117,9 +205,22 @@ function UserDashboard({ userEmail, onLogout }: UserDashboardProps) {
 // ==========================================
 
 export default function App() {
-  const { user, isAuthenticated, isLoading, login, logout, checkSession } =
-    useAuth();
+  const {
+    user,
+    isAuthenticated,
+    isLoading,
+    pendingChallenge,
+    login,
+    completarNuevaContrasena,
+    cancelarCambioContrasena,
+    logout,
+    checkSession,
+  } = useAuth();
   const [credentials, setCredentials] = useState({ email: "", password: "" });
+  const [nuevaContrasena, setNuevaContrasena] = useState("");
+  const [nombreUsuario, setNombreUsuario] = useState("");
+  const [cambioError, setCambioError] = useState<string | null>(null);
+  const [isCambiando, setIsCambiando] = useState(false);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setCredentials({ ...credentials, [e.target.name]: e.target.value });
@@ -128,6 +229,32 @@ export default function App() {
   useEffect(() => {
     checkSession();
   }, [checkSession]);
+
+  const handleSubmitNuevaContrasena = async () => {
+    if (!pendingChallenge) return;
+    setIsCambiando(true);
+    setCambioError(null);
+    try {
+      await completarNuevaContrasena(nuevaContrasena, nombreUsuario);
+      setNuevaContrasena("");
+      setNombreUsuario("");
+    } catch (e) {
+      setCambioError(
+        e instanceof Error
+          ? e.message
+          : "No se pudo actualizar la contraseña",
+      );
+    } finally {
+      setIsCambiando(false);
+    }
+  };
+
+  const handleCancelarCambio = () => {
+    setNuevaContrasena("");
+    setNombreUsuario("");
+    setCambioError(null);
+    cancelarCambioContrasena();
+  };
 
   if (isLoading) {
     return (
@@ -147,7 +274,22 @@ export default function App() {
       <section className="flex flex-col items-center text-center max-w-md w-full py-12">
         <Header />
 
-        {isAuthenticated ? (
+        {pendingChallenge ? (
+          <ChangePasswordForm
+            email={pendingChallenge.email}
+            password={nuevaContrasena}
+            nombre={nombreUsuario}
+            error={cambioError}
+            isSubmitting={isCambiando}
+            onChange={(e) =>
+              e.target.name === "nombre"
+                ? setNombreUsuario(e.target.value)
+                : setNuevaContrasena(e.target.value)
+            }
+            onSubmit={handleSubmitNuevaContrasena}
+            onCancel={handleCancelarCambio}
+          />
+        ) : isAuthenticated ? (
           <UserDashboard userEmail={user?.email} onLogout={logout} />
         ) : (
           <LoginForm
